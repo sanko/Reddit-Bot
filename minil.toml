@@ -1,0 +1,4 @@
+name = "Reddit-Bot"
+# badges = ["travis"]
+module_maker="ModuleBuildTiny"
+
