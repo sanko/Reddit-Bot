@@ -5,6 +5,7 @@ use IO::Async::Timer::Periodic;
 use lib 'C:\Users\Sanko\Documents\GitHub\Finance-Robinhood\lib';
 use Finance::Robinhood;
 use Template::Liquid;
+use Try::Tiny;
 #
 our $VERSION = "0.01";
 #
@@ -12,18 +13,27 @@ extends 'Reddit::Bot::Service';
 #
 sub state {
     my $s = shift;
-    (latest    => $s->latest,
-     subreddit => $s->subreddit);
+    {type => 'CashTag',
+     args => {($s->_has_latest_link ? (latest_link => $s->latest_link) : ()),
+              ($s->_has_latest_comment ?
+                   (latest_comment => $s->latest_comment)
+               : ()
+              ),
+              quotes    => $s->quotes,
+              subreddit => $s->subreddit
+     }
+    };
 }
 has subreddit => (is       => 'ro',
                   isa      => 'Str',
                   required => 1
 );
-has latest => (is        => 'ro',
-               isa       => 'Str',
-               writer    => '_set_latest',
-               predicate => '_has_latest'
-);
+has 'latest_'
+    . $_ => (is        => 'ro',
+             isa       => 'Str',
+             writer    => '_set_latest_' . $_,
+             predicate => '_has_latest_' . $_
+    ) for qw[link comment];
 has template => (isa     => 'Template::Liquid',
                  is      => 'ro',
                  builder => 'build_template'
@@ -31,9 +41,9 @@ has template => (isa     => 'Template::Liquid',
 
 sub build_template {
     Template::Liquid->parse(<<'END') }
-|Symbol            |Last Price|Ask (Size)|Bid (Size)|
-|:----------------:|:--------:|:--------:|:--------:|
-{%for quote in quotes%}|${{quote.symbol}}{%if quote.trading_halted%} TRADING HALTED!{%endif%}|${{quote.last_trade_price}}|${{quote.ask_price}} ({{quote.ask_size}})|${{quote.bid_price}} ({{quote.bid_size}})|
+|Symbol            |Name|Last Price|Ask (Size)|Bid (Size)|
+|:-----------------|:---|:---------|:---------|:--------|
+{%for quote in quotes%}|${{quote.symbol}}|{%if quote.trading_halted%}TRADING HALTED! {%endif%}{{quote.name}}|${{quote.last_trade_price}}|${{quote.ask_price}} ({{quote.ask_size}})|${{quote.bid_price}} ({{quote.bid_size}})|
 {%endfor%}
 
 {{tail}}
@@ -45,69 +55,148 @@ has timer => (
     default  => sub {
         my $s = shift;
         IO::Async::Timer::Periodic->new(
-            interval       => 60,
-            first_interval => 5,
+            interval       => 180,
+            first_interval => 30,
             on_tick        => sub {
-                my $listing =
-                    $s->client->get_subreddit_comments(
-                              $s->subreddit,
-                              {limit => 100,
-                               ($s->_has_latest ? (before => $s->latest) : ())
-                              }
-                    );
+                warn 'scrape timer tick!';
                 my $market_mode = $s->market_mode;
-                $s->_adjust_update_timer($market_mode);
-                return if !$listing;    # Something not right happened
-                                        #ddx $listing;
-                for my $post (reverse $listing->all_children) {
-                    warn $post->author . ': ' . $post->body;
 
-                    #ddx $post;
-                    $s->_set_latest($post->name);
-                    next
-                        if $s->bot->username eq
-                        $post->author;    # Don't reply to ourselves...
-                    my @symbols;
-                    {
-                        my %seen;
-                        for my $element ($post->body =~ m[\B\$([A-Z]+)]ig) {
-                            $seen{uc $element}++;
-                        }
-                        @symbols = sort keys %seen;
-                    }
-
-                    #ddx \@symbols;
-                    next if !@symbols;
-
-                    # Check to see if we need to cache any quote objects
-                    my @need = grep { !$s->has_quote($_) } @symbols;
-                    if (@need) {
-                        my $quotes = Finance::Robinhood::quote(@need);
-
-                        #use Data::Dump;
-                        #ddx $quotes;
-                        for (@{$quotes->{results}}) {
-                            $s->set_quote($_->symbol,
-                                          quotebot::quote->new(quote => $_));
-                        }
-                    }
-                    my @quotes
-                        = grep {defined} map { $s->get_quote($_) } @symbols;
-                    next if !@quotes;
-                    my $post =
-                        $s->client->post_comment(
-                                    $post->name,
-                                    $s->template->render(
-                                        quotes => [map { $_->quote } @quotes],
-                                        tail => $s->tail($market_mode)
-                                    )
+                # Do link/text posts first
+                {
+                    my $listing =
+                        $s->client->get_subreddit_new(
+                                             $s->subreddit,
+                                             {limit => 100,
+                                              ($s->_has_latest_link ?
+                                                   (before => $s->latest_link)
+                                               : ()
+                                              )
+                                             }
                         );
-                    #
-                    #use Data::Dump;
-                    #ddx $post;
-                    #ddx \@quotes;
-                    $_->add_post($post->name) for @quotes;
+                    if ($listing) {
+                        for my $post (reverse $listing->all_children) {
+                            $s->_set_latest_link($post->name);
+                            next
+                                if $s->bot->username eq
+                                $post->author;   # Don't reply to ourselves...
+                            my @symbols;
+                            {
+                                my %seen;
+                                for my $element (
+                                            $post->title =~ m[\B\$([A-Z]+)]ig)
+                                {   $seen{uc $element}++;
+                                }
+                                for my $element (
+                                         $post->selftext =~ m[\B\$([A-Z]+)]ig)
+                                {   $seen{uc $element}++;
+                                }
+                                @symbols = sort keys %seen;
+                            }
+
+                            #ddx \@symbols;
+                            next if !@symbols;
+
+                          # Check to see if we need to cache any quote objects
+                            my @need = grep { !$s->has_quote($_) } @symbols;
+                            if (@need) {
+                                my $quotes = Finance::Robinhood::quote(@need);
+
+                                #use Data::Dump;
+                                #ddx $quotes;
+                                for (@{$quotes->{results}}) {
+                                    $s->set_quote($_->symbol,
+                                           quotebot::quote->new(quote => $_));
+                                }
+                            }
+                            my @quotes = grep {defined}
+                                map { $s->get_quote($_) } @symbols;
+                            next if !@quotes;
+                            my $post = $s->client->post_comment(
+                                $post->name,
+                                $s->template->render(
+                                        quotes => [@quotes],
+                                        tail => $s->tail($market_mode)
+                                ),
+                                sub {
+                                    my ($postX) = @_;
+                                    $_->add_post($postX->name) for @quotes;
+                                }
+                            );
+                            #
+                            #use Data::Dump;
+                            #ddx $post;
+                            #ddx \@quotes;
+                        }
+                    }
                 }
+                {
+                    # Time to do Comments
+                    my $listing =
+                        $s->client->get_subreddit_comments(
+                                          $s->subreddit,
+                                          {limit => 100,
+                                           ($s->_has_latest_comment
+                                            ?
+                                                (before => $s->latest_comment)
+                                            : ()
+                                           )
+                                          }
+                        );
+                    if ($listing) {
+                        for my $post (reverse $listing->all_children) {
+
+                            #ddx $post;
+                            $s->_set_latest_comment($post->name);
+                            next
+                                if $s->bot->username eq
+                                $post->author;   # Don't reply to ourselves...
+                            my @symbols;
+                            {
+                                my %seen;
+                                for my $element (
+                                             $post->body =~ m[\B\$([A-Z]+)]ig)
+                                {   $seen{uc $element}++;
+                                }
+                                @symbols = sort keys %seen;
+                            }
+
+                            #ddx \@symbols;
+                            next if !@symbols;
+
+                          # Check to see if we need to cache any quote objects
+                            my @need = grep { !$s->has_quote($_) } @symbols;
+                            if (@need) {
+                                my $quotes = Finance::Robinhood::quote(@need);
+
+                                #use Data::Dump;
+                                #ddx $quotes;
+                                for (@{$quotes->{results}}) {
+                                    $s->set_quote($_->symbol,
+                                           quotebot::quote->new(quote => $_));
+                                }
+                            }
+                            my @quotes = grep {defined}
+                                map { $s->get_quote($_) } @symbols;
+                            next if !@quotes;
+                            my $post = $s->client->post_comment(
+                                $post->name,
+                                $s->template->render(
+                                                quotes => [@quotes],
+                                                tail => $s->tail($market_mode)
+                                ),
+                                sub {
+                                    my ($postX) = @_;
+                                    $_->add_post($postX->name) for @quotes;
+                                }
+                            );
+                            #
+                            #use Data::Dump;
+                            #ddx $post;
+                            #ddx \@quotes;
+                        }
+                    }
+                }
+                $s->_adjust_update_timer($market_mode);
             }
         );
     }
@@ -120,8 +209,9 @@ has update_timer => (
         my $s = shift;
         IO::Async::Timer::Periodic->new(
             interval       => 300,
-            first_interval => 600,
+            first_interval => 30,
             on_tick        => sub {
+                warn 'update timer tick!';
                 my ($tick) = @_;
                 my %todo;
                 my $five_min_ago
@@ -139,20 +229,18 @@ has update_timer => (
                 }
                 #
                 my $market_mode = $s->market_mode;
-                #
                 for my $id (keys %todo) {
-                    $s->client->edit_comment(
+                    my $post = $s->client->edit_comment(
                         $id,
                         $s->template->render(
                             quotes => [
-                                map { $_->quote } (
-                                    grep {
-                                        $_->find_post(sub {m[^$id$]})
-                                    } $s->get_quotes
-                                )
+                                grep {
+                                    $_->find_post(sub {m[^$id$]})
+                                } $s->get_quotes
                             ],
                             tail => $s->tail($market_mode)
-                        )
+                        ),
+                        sub {1}
                     );
                 }
                 #
@@ -269,11 +357,25 @@ has posts => (traits  => ['Array'],
                           sorted_posts => 'sort',
               }
 );
-has quote => (is       => 'ro',
-              isa      => 'Finance::Robinhood::Quote',
-              required => 1,
-              handles  => [qw[refresh symbol updated_at]]
+has quote => (
+    is       => 'ro',
+    isa      => 'Finance::Robinhood::Quote',
+    required => 1,
+    handles  => [
+        qw[refresh symbol updated_at trading_halted
+            last_trade_price ask_price ask_size bid_price bid_size]
+    ]
 );
+has instrument => (
+           is      => 'ro',
+           isa     => 'Finance::Robinhood::Instrument',
+           handles => [qw[historicals tradeable id splits fundamentals name]],
+           lazy_build => 1
+);
+
+sub _build_instrument {
+    Finance::Robinhood::instrument(shift->symbol);
+}
 
 #    MSFT => {
 #        posts => ['id', 'id2'],
