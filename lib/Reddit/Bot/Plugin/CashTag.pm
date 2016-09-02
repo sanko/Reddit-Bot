@@ -258,21 +258,23 @@ sub _adjust_update_timer {
     #  0: pre-market     - (a-9:30)cache until markets open
     #  1: markets open   - (9:30a-4p) update
     #  2: after-market   - () only update once and forget it
-    if ($market_mode == -1) {
-        $s->update_timer->stop if $s->update_timer->is_running;
-        $s->update_timer->configure(
-                              interval => 1800,    # TODO: Figure out midnight
-        );
+    if ($market_mode == -1 || $market_mode == 2) {
 
-        #$s->update_timer->start unless $s->update_timer->is_running;
+#        $s->update_timer->stop if $s->update_timer->is_running;
+#        $s->update_timer->configure(
+#                              interval => 1800,    # TODO: Figure out midnight
+#        );
+#        delete $s->update_timer->{id};
+#        $s->update_timer->start unless $s->update_timer->is_running;
         $s->clear_quotes();
     }
-    elsif ($s->update_timer->{interval} != 600) {   # Restore normal operation
-        $s->update_timer->stop if $s->update_timer->is_running;
-        $s->update_timer->configure(interval => 600);
 
-        #$s->update_timer->start unless $s->update_timer->is_running;
-    }
+#    elsif ($s->update_timer->{interval} != 600) {   # Restore normal operation
+#        $s->update_timer->stop if $s->update_timer->is_running;
+#        $s->update_timer->configure(interval => 600);
+#        delete $s->update_timer->{id};
+#        $s->update_timer->start unless $s->update_timer->is_running;
+#    }
 }
 has quotes => (traits  => ['Hash'],
                is      => 'ro',
@@ -293,19 +295,28 @@ has quotes => (traits  => ['Hash'],
 
 sub market_mode {
     shift;    # $s;
-    my $hours = Finance::Robinhood::Market->new('XNYS')->todays_hours;
-    $hours = shift if @_;             # Debug cheat!
-    return -1 if !$hours->is_open;    # Weekends and holidays
-    my $now = DateTime->now;
-    return 0 if $now > $hours->extended_opens_at && $now < $hours->opens_at;
-    return 1 if $now > $hours->opens_at          && $now < $hours->closes_at;
-    return 2 if $now > $hours->closes_at && $now < $hours->extended_closes_at;
+    my $hours;
+    try {
+        $hours = Finance::Robinhood::Market->new('XNYS')->todays_hours;
 
-    # -1: markets closed - Weekend!
-    #  0: pre-market     - (a-9:30)cache until markets open
-    #  1: markets open   - (9:30a-4p) update
-    #  2: after-market   - () only update once and forget it
-    return -1;    # fall back
+        #        $hours = shift if @_;    # Debug cheat!
+        return -1 if !$hours->is_open;    # Weekends and holidays
+        my $now = DateTime->now;
+        return 1 if $now > $hours->opens_at && $now < $hours->closes_at;
+        return 0
+            if $now > $hours->extended_opens_at && $now < $hours->opens_at;
+        return 2
+            if $now > $hours->closes_at && $now < $hours->extended_closes_at;
+
+        # -1: markets closed - Weekend!
+        #  0: pre-market     - (a-9:30)cache until markets open
+        #  1: markets open   - (9:30a-4p) update
+        #  2: after-market   - () only update once and forget it
+    }
+    catch {
+        warn 'Failed to grab NYSE trading hours: ' . $_;
+    }
+    return 0;    # fall back
 }
 my @activity = (
       q[I'd go outside and get some sun. ...if I weren't a bot.],
@@ -315,7 +326,8 @@ my @activity = (
 
 sub tail {
     my ($s, $mode) = @_;
-    return $mode == 1
+    return '';    # XXX - I keep losing track of the market mode somehow...
+    return $mode == 2
         ? q[I'll update this once more when after-hours trading ends.]
         : $mode == 1
         ? q[I'll keep this updated until markets close today. Take note of the last time this post was edited.]
