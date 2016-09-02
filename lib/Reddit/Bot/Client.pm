@@ -195,63 +195,129 @@ sub get_subreddit_comments {    # Returns threads and comments
         ()
     }
 }
-
-
-
-
+has queue => (traits  => ['Hash'],
+              is      => 'ro',
+              isa     => 'HashRef[Future]',
+              default => sub { {} },
+              handles => {set_queued    => 'set',
+                          get_queued    => 'get',
+                          has_no_queue  => 'is_empty',
+                          num_queued    => 'count',
+                          delete_queued => 'delete',
+                          queued_pairs  => 'kv'
+              }
+);
 
 sub post_comment {
-    my ($s, $parent, $text) = @_;
+    my ($s, $parent, $text, $callback) = @_;
+    my $request = $s->_request('POST',
+                               'https://oauth.reddit.com/api/comment/',
+                               {api_type => 'json',
+                                thing_id => $parent,
+                                text     => $text
+                               }
+    );
+    if ($callback) {
+        $request->on_done(
+            sub {
+                $s->set_queued(scalar $request, $request);
+                my $response = decode_json $request->get->decoded_content;
+                ddx $response;
+                $callback->(Reddit::Bot::Client::Comment->new(
+                                      $response->{json}{data}{things}[0]{data}
+                            )
+                );
+            }
+        );
+        return $s->delete_queued(scalar $request);
+    }
+    my $response = decode_json $request->get->decoded_content;
+    #
+    if ($response->{json}{errors}) {
 
+        # TODO: Don't forget $response->{json}{errors}
+        use Data::Dump;
+        ddx $response;
+        warn 'I need to retry this. Or wait until I have enough karma.';
+    }
 
-    my $response = decode_json $s->_request('POST', 'https://oauth.reddit.com/api/comment/', {
-        api_type => 'json',
-        thing_id => $parent,
-        text     => $text
-        } )->get->decoded_content;
+    #    return if !$inbox;
+    use Data::Dump;
     ddx $response;
- # TODO: Don't forget $response->{json}{errors}
-#    return if !$inbox;
-    my $listing = Reddit::Bot::Client::Comment->new($response->{json}{data}{things}[0]{data});
-#    $s->_on_comment($_) for reverse $listing->all_children;
+    my $listing = Reddit::Bot::Client::Comment->new(
+                                    $response->{json}{data}{things}[0]{data});
+
+    #    $s->_on_comment($_) for reverse $listing->all_children;
     $listing;
 }
-
 
 sub edit_comment {
-    my ($s, $postid, $text) = @_;
+    my ($s, $postid, $text, $callback) = @_;
 
+    my $request = $s->_request('POST',
+                                 'https://oauth.reddit.com/api/editusertext/',
+                               {api_type => 'json',
+                                thing_id => $postid,
+                                text     => $text
+                               }
+    );
+    if ($callback) {
+        $request->on_done(
+            sub {
+                $s->set_queued(scalar $request, $request);
+                try {
+                my $response = decode_json $request->get->decoded_content;
+                ddx $response;
+                $callback->(Reddit::Bot::Client::Comment->new(
+                                      $response->{json}{data}{things}[0]{data}
+                            )
+                );
+                }
+            }
+        );
+        return $s->delete_queued(scalar $request);
+    }
+    my $response = decode_json $request->get->decoded_content;
+    #
+    if ($response->{json}{errors}) {
 
-    my $response = decode_json $s->_request('POST', 'https://oauth.reddit.com/api/editusertext/', {
-        api_type => 'json',
-        thing_id => $postid,
-        text     => $text
-        } )->get->decoded_content;
+        # TODO: Don't forget $response->{json}{errors}
+        use Data::Dump;
+        ddx $response;
+        warn 'I need to retry this. Or wait until I have enough karma.';
+    }
+
+    #    return if !$inbox;
+    use Data::Dump;
     ddx $response;
- # TODO: Don't forget $response->{json}{errors}
-#    return if !$inbox;
-    my $listing = Reddit::Bot::Client::Comment->new($response->{json}{data}{things}[0]{data});
-#    $s->_on_comment($_) for reverse $listing->all_children;
+    my $listing = Reddit::Bot::Client::Comment->new(
+                                    $response->{json}{data}{things}[0]{data});
+
+    #    $s->_on_comment($_) for reverse $listing->all_children;
     $listing;
 }
-
 
 # Utils
 sub _request {
     my ($s, $verb, $url, $content) = @_;
-    return
-        $s->http->do_request(((defined $content ? (content => $content, content_type => 'application/x-www-form-urlencoded') : ()),
-                              method => $verb,
-                              ($s->has_access_token ? (
+    my $response = $s->http->do_request(
+               ((defined $content ? (
+                           content      => $content,
+                           content_type => 'application/x-www-form-urlencoded'
+                 ) : ()
+                ),
+                method => $verb,
+                ($s->has_access_token ? (
                                         headers => {
                                             Authorization => ucfirst join ' ',
                                             $s->token_type, $s->access_token
                                         }
-                               ) : ()
-                              ),
-                              uri => $url
-                             )
-        );
+                 ) : ()
+                ),
+                uri => $url
+               )
+    );
+    $response;
 }
 #
 no Moose;
