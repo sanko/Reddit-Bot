@@ -9,9 +9,10 @@ use Net::Async::HTTP;
 use URI::Escape qw[uri_unescape];
 use JSON::Tiny qw[decode_json encode_json];
 use Try::Tiny;
+
 # Disable tricky boolean handling
 $JSON::Tiny::FALSE = 0;
-$JSON::Tiny::TRUE = 1;
+$JSON::Tiny::TRUE  = 1;
 use Data::Dump;
 #
 has access_token => (is => 'rw', isa => 'Str', lazy_build => 1);
@@ -65,17 +66,13 @@ sub login {
                  ]
         )->on_done(
         sub {
-            warn;
             my $response = shift;
             if ($response->is_success) {
-                warn 'OK! 1';
                 my $token = decode_json $response->decoded_content;
-                warn 'OK! 2';
                 $s->$_($token->{$_}) for keys %$token;
                 $s->_set_token_refresh(
                     [$token->{expires_in} - 1,
                      sub {
-                         warn 'Refreshing login token...';
                          $s->login($client_id, $secret, $u, $p);
                      }
                     ]
@@ -83,7 +80,6 @@ sub login {
                 $s->loop->add($s->token_refresh)
                     unless defined $s->token_refresh->loop;
                 $s->token_refresh->start;
-                warn 'OK! 4';
                 $s->_on_login();
             }
             else {
@@ -106,7 +102,6 @@ has 'on_' . $_ => (
 
 # Account
 sub get_me {
-    warn 'get_me!';
     decode_json
         shift->_request('GET', 'https://oauth.reddit.com/api/v1/me')
         ->get->decoded_content;
@@ -128,7 +123,6 @@ sub get_messages {
             )
         : ''
     );
-    warn $url;
     my $inbox = decode_json $s->_request('GET', $url)->get->decoded_content;
     return if !defined $inbox->{data};
     my $listing = Reddit::Bot::Client::Listing->new($inbox->{data});
@@ -152,9 +146,7 @@ sub get_subreddit_new {    # Returns new threads
             )
         : ''
     );
-    warn $url;
     my $inbox = decode_json $s->_request('GET', $url)->get->decoded_content;
-    ddx $inbox;
     return if !$inbox;
     my $listing = Reddit::Bot::Client::Listing->new($inbox->{data});
     $s->_on_new_thread($_) for reverse $listing->all_children;
@@ -176,14 +168,10 @@ sub get_subreddit_comments {    # Returns threads and comments
             )
         : ''
     );
-    warn $url;
-
     my $raw;
-
     try {
         $raw = $s->_request('GET', $url)->get->decoded_content;
         my $inbox = decode_json $raw;
-            ddx $inbox;
         return if !$inbox;
         my $listing = Reddit::Bot::Client::Listing->new($inbox->{data});
         $s->_on_comment($_) for reverse $listing->all_children;
@@ -329,6 +317,7 @@ use Moose::Util::TypeConstraints;
 #
 subtype 'My::Things'   => as class_type('Reddit::Bot::Client::Thing');
 subtype 'ListOfThings' => as 'ArrayRef[My::Things]';
+
 #coerce 'My::Things'    => from 'HashRef' => via {
 #          $_->{kind} eq 't1' ? Reddit::Bot::Client::Comment->new($_)
 #        : $_->{kind} eq 't3' ? Reddit::Bot::Client::Link->new($_)
@@ -340,7 +329,8 @@ coerce 'ListOfThings' => from 'ArrayRef[HashRef]' => via {
     [map {
          $_->{kind} eq 't1' ? Reddit::Bot::Client::Comment->new($_->{data})
              : $_->{kind} eq 't3' ? Reddit::Bot::Client::Link->new($_->{data})
-             : $_->{kind} eq 't4' ? Reddit::Bot::Client::Message->new($_->{data})
+             : $_->{kind} eq 't4'
+             ? Reddit::Bot::Client::Message->new($_->{data})
              : ()
      } @$_
     ];
@@ -396,11 +386,8 @@ has $_ => (is  => 'ro',
 has $_ => (is  => 'ro',
            isa => 'Maybe[Int]'
 ) for qw[score controversiality];
-has $_ => (is  => 'ro',
-           isa => 'Bool'
-) for qw[score];
 #
-package    # t3
+package                   # t3
     Reddit::Bot::Client::Link;
 use Moose;
 extends 'Reddit::Bot::Client::Thing';

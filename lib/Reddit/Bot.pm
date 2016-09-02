@@ -75,25 +75,16 @@ sub _build_client {
         loop       => $s->loop,
         user_agent => 'Robingood:1.0.0 (by /u/CardinalNumber)',
         on_login   => sub {
-            warn;
             my ($ss, $tokens) = @_;
-            warn ref $ss;
-            warn ref $tokens;
-
-            #ddx $ss->get_me;
-            warn;
-            warn;
-
-            #ddx $ss->get_messages('inbox');
             $s->_on_login($tokens);
-            warn;
         },
         on_mail => sub {
             $s->_on_mail(@_);
         },
-                on_comment => sub {
+        on_comment => sub {
             $s->_on_comment(@_);
-        } ,on_new_thread => sub {
+        },
+        on_new_thread => sub {
             $s->_on_new_thread(@_);
         }
     );
@@ -110,38 +101,31 @@ has 'on_' . $_ => (
     handles => {'_on_' . $_ => 'execute_method'},
 ) for qw[login mail comment new_thread];
 #
-
 sub load {
     my ($self, $module, $args) = @_;
 
-
     # This is possible a leeeetle bit evil.
-     my $filename = $module;
+    my $filename = $module;
     $filename =~ s{::}{/}g;
     my $file = "Reddit/Bot/Plugin/$filename.pm";
-    $file = "./$filename.pm"         if ( -e "./$filename.pm" );
-    $file = "./modules/$filename.pm" if ( -e "./modules/$filename.pm" );
-     warn "Loading $module from $file";
+    $file = "./$filename.pm"         if (-e "./$filename.pm");
+    $file = "./modules/$filename.pm" if (-e "./modules/$filename.pm");
+    warn "Loading $module from $file";
 
     # force a reload of the file (in the event that we've already loaded it).
     no warnings 'redefine';
     delete $INC{$file};
-
     try { require $file } catch { die "Can't load $module: $_"; };
 
     # Ok, it's very evil. Don't bother me, I'm working.
-
-    my $m = "Reddit::Bot::Plugin::$module"->new(
-        bot   => $self,
-        %$args
-    );
-
-    die("->new didn't return an object") unless ( $m and ref($m) );
-    die( ref($m) . " isn't a $module" )
-      unless ref($m) =~ /\Q$module/;
+    my $m =
+        "Reddit::Bot::Plugin::$module"->new(bot => $self,
+                                            %$args);
+    die("->new didn't return an object") unless ($m and ref($m));
+    die(ref($m) . " isn't a $module")
+        unless ref($m) =~ /\Q$module/;
 
     #$self->add_handler( $m, $module );
-
     return $m;
 }
 #
@@ -149,33 +133,30 @@ sub BUILD {
     my ($s, $args) = @_;
     my $okay = 0;
     for (1 .. 6) {
-         last if $okay;
+        last if $okay;
         try {
             $s->client->login($s->client_id, $s->secret,
                               $s->username,  $s->password);
 
             # TODO: Move this service init somewhere else... Idk where yet
             $s->add_service(Reddit::Bot::Service::Home->new(
-                                                         bot       => $s,
-                                                         subreddit => $args->{home}
+                                                    bot       => $s,
+                                                    subreddit => $args->{home}
                             )
             ) if $args->{home};
             $s->add_service(Reddit::Bot::Service::Inbox->new(bot => $s));
-
-
             use Data::Dump;
-            ddx $args->{plugins};
-             for my $plugin (@{$args->{plugins}}) {
+            #ddx $args->{plugins};
+            for my $plugin (@{$args->{plugins}}) {
                 my $service = $s->load($plugin->{type}, $plugin->{args});
-
                 $s->add_service($service);
             }
             #
             $okay++;
-        } catch {
-  warn "caught error: $_";
-};
-
+        }
+        catch {
+            warn "caught error: $_";
+        };
     }
     die 'Failed to connect to Reddit after several attempts' if !$okay;
 }

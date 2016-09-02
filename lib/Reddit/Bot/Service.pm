@@ -13,8 +13,5 @@ has bot => (is       => 'ro',
 );
 
 sub state {
-
-
 }
-
 1;

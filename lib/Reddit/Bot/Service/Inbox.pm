@@ -45,6 +45,5 @@ sub BUILD {
     my $s = shift;
     $s->client->add($s->timer);
     $s->timer->start;
-    warn 'Timer started!';
 }
 1;

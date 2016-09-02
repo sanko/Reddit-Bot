@@ -1,4 +1,5 @@
 package Reddit::Bot::Service::Home;
+
 # TODO: Rename this RBS::Monitor and make CashTag extend it after taking comment handler out
 use Moose;
 use IO::Async::Timer::Periodic;
@@ -33,8 +34,9 @@ has timer => (
                                ($s->_has_latest ? (before => $s->latest) : ())
                               }
                     );
-                    return if !$listing; # Something happened to Reddit
+                return if !$listing;    # Something happened to Reddit
                 for my $post (reverse $listing->all_children) {
+
                     #warn $post->author . ': ' . $post->selftext;
                     $s->_set_latest($post->name);
                 }
@@ -47,7 +49,5 @@ sub BUILD {
     my $s = shift;
     $s->client->add($s->timer);
     $s->timer->start;
-    warn 'Timer started!';
 }
-1;
 1;
