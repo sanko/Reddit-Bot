@@ -13,6 +13,17 @@ use Reddit::Bot::Service::Home;
 our $VERSION = "0.01";
 $|++;
 #
+sub state {
+    my $s = shift;
+    {client_id => $s->client_id,
+     secret    => $s->secret,
+     username  => $s->username,
+     password  => $s->password,
+     plugins   => [grep {defined} map { $_->state } $s->all_services],
+     timestamp => time,
+ };
+}
+#
 has loop => (is       => 'ro',
              isa      => 'IO::Async::Loop',
              required => 1,
